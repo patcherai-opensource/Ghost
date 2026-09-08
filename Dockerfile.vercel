@@ -1,0 +1,26 @@
+# Vercel container build for the Ghost DAST target.
+#
+# Vercel builds this file itself and pushes the result to Vercel Container Registry — it
+# cannot pull a prebuilt image from our ECR mirror, so the tag below is resolved from
+# Docker Hub at build time.
+#
+# Why the published release rather than this branch's source: a source build needs the
+# whole workspace closure (pnpm install --filter "ghost...", build:tsc, build:assets,
+# then `pnpm deploy --prod` to flatten it) AND a separate apps/admin build injected at
+# ghost/core/core/built/admin — see Dockerfile.production, whose `core` target ships
+# without the /ghost panel for exactly that reason. Point this at Dockerfile.production's
+# `full` target only when testing branch-specific changes, and build admin first.
+#
+# Pinned deliberately. A floating `:6` tag silently runs an older Ghost against newer
+# config — that is how staging ended up booting 6.42.0 while everything else assumed 6.59.
+FROM ghost:6.62.0
+
+# Ghost listens on 2368 (server.port in the image's config.production.json). Vercel routes
+# to port 80 unless PORT is set, so PORT=2368 must ALSO be set in the project's environment
+# variables — this ENV alone does not configure Vercel's router.
+ENV server__port=2368
+
+# The image binds host "::" (dual-stack) by default — left alone deliberately; narrowing
+# it to 0.0.0.0 would make the container unreachable on an IPv6-only path.
+
+EXPOSE 2368
