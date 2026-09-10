@@ -4,10 +4,13 @@
     "ghost": {
       "runtime": "container",
       "root": ".",
-      "entrypoint": "Dockerfile.vercel"
+      "entrypoint": "Dockerfile.vercel",
+      "functions": {
+        "Dockerfile.vercel": {
+          "maxConcurrency": 50
+        }
+      }
     }
   },
-  "rewrites": [
-    { "source": "/(.*)", "destination": { "service": "ghost" } }
-  ]
+  "rewrites": [{ "source": "/(.*)", "destination": { "service": "ghost" } }]
 }
