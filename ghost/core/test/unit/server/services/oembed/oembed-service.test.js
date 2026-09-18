@@ -691,6 +691,10 @@ describe('oembed-service', function () {
 
   describe('processImageFromUrl', function () {
     const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+    const PNG_BYTES = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
 
     it('normalizes Uint8Array image responses from Got 15 to Buffer', async function () {
       const bytes = new Uint8Array(Buffer.from('img-bytes'));
@@ -732,7 +736,7 @@ describe('oembed-service', function () {
     });
 
     it('stores downloaded bookmark assets via image storage and returns the adapter URL', async function () {
-      const imageBytes = Buffer.from('img-bytes');
+      const imageBytes = PNG_BYTES;
       const saveRaw = sinon
         .stub()
         .resolves('https://storage.ghost.is/c/6f/a3/site/content/images/thumbnail/sample-x.png');
@@ -756,7 +760,7 @@ describe('oembed-service', function () {
       });
 
       const storedUrl = await service.processImageFromUrl(
-        'https://example.com/sample.png?token=abc',
+        'https://example.com/sample.html?token=abc',
         'thumbnail',
       );
 
@@ -773,10 +777,39 @@ describe('oembed-service', function () {
       );
     });
 
+    it('rejects non-image bookmark assets regardless of their URL extension', async function () {
+      const saveRaw = sinon.stub().resolves('/stored');
+      let responseBytes;
+      const service = new OembedService({
+        imageStore: {
+          getSanitizedFileName: sinon.stub().returns('payload'),
+          saveRaw,
+        },
+        externalRequest() {
+          return {
+            buffer: async () => responseBytes,
+          };
+        },
+      });
+
+      for (const bytes of [
+        Buffer.from('<!doctype html><script>alert(1)</script>'),
+        Buffer.from('{"proof":"not an image"}'),
+      ]) {
+        responseBytes = bytes;
+        await assert.rejects(
+          () => service.processImageFromUrl('https://example.com/payload.html', 'icon'),
+          { name: 'ValidationError', message: 'Downloaded bookmark asset is not a valid image.' },
+        );
+      }
+
+      sinon.assert.notCalled(saveRaw);
+    });
+
     it('writes a fresh key on every call, even for identical bytes (ONC-1788)', async function () {
       // A content hash would collide here and force an overwrite, which the
       // production bucket rejects. A unique key avoids the overwrite entirely.
-      const imageBytes = Buffer.from('ico-bytes');
+      const imageBytes = PNG_BYTES;
       const saveRaw = sinon.stub().resolves('/stored');
       const getSanitizedFileName = sinon.stub().returns('favicon');
 
@@ -800,10 +833,10 @@ describe('oembed-service', function () {
       await service.processImageFromUrl('https://a.example.com/favicon.ico', 'icon');
       await service.processImageFromUrl('https://b.example.com/favicon.ico', 'icon');
 
-      assert.match(saveRaw.firstCall.args[1], new RegExp(`^icon/favicon-${UUID_RE.source}\\.ico$`));
+      assert.match(saveRaw.firstCall.args[1], new RegExp(`^icon/favicon-${UUID_RE.source}\\.png$`));
       assert.match(
         saveRaw.secondCall.args[1],
-        new RegExp(`^icon/favicon-${UUID_RE.source}\\.ico$`),
+        new RegExp(`^icon/favicon-${UUID_RE.source}\\.png$`),
       );
       assert.notEqual(saveRaw.firstCall.args[1], saveRaw.secondCall.args[1]);
     });
@@ -828,7 +861,7 @@ describe('oembed-service', function () {
         },
         externalRequest() {
           return {
-            buffer: async () => Buffer.from('bytes'),
+            buffer: async () => PNG_BYTES,
           };
         },
       });
@@ -857,7 +890,7 @@ describe('oembed-service', function () {
         },
         externalRequest() {
           return {
-            buffer: async () => Buffer.from('bytes'),
+            buffer: async () => PNG_BYTES,
           };
         },
       });
@@ -879,7 +912,7 @@ describe('oembed-service', function () {
         },
         externalRequest() {
           return {
-            buffer: async () => Buffer.from('img-bytes'),
+            buffer: async () => PNG_BYTES,
           };
         },
       });
@@ -1065,19 +1098,18 @@ describe('oembed-service', function () {
       it('leaves raster images untouched', async function () {
         const saveRaw = sinon.stub().resolves('/stored');
 
-        await buildService(saveRaw, PNG_MAGIC).processImageFromUrl(
+        await buildService(saveRaw, PNG_BYTES).processImageFromUrl(
           'https://example.com/favicon.PNG',
           'icon',
         );
 
-        assert.deepEqual(saveRaw.firstCall.args[0], PNG_MAGIC);
-        // extension case is preserved, so existing URLs do not change
-        assert.match(saveRaw.firstCall.args[1], /\.PNG$/);
+        assert.deepEqual(saveRaw.firstCall.args[0], PNG_BYTES);
+        assert.match(saveRaw.firstCall.args[1], /\.png$/);
       });
 
       it('does not convert a raster file containing the text <svg', async function () {
         const saveRaw = sinon.stub().resolves('/stored');
-        const png = Buffer.concat([PNG_MAGIC, Buffer.from('<svg width="1">')]);
+        const png = Buffer.concat([PNG_BYTES, Buffer.from('<svg width="1">')]);
 
         await buildService(saveRaw, png).processImageFromUrl(
           'https://example.com/favicon.png',
