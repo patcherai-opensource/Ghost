@@ -42,6 +42,7 @@ const messages = {
   unableToFetchOembed: 'Unable to fetch requested embed.',
   unauthorized: 'URL contains a private resource.',
   unconvertibleSvg: 'SVG image is too large or compressed to convert.',
+  invalidImage: 'Invalid image.',
 };
 
 const SVG_RASTER_SIZE = 256;
@@ -56,6 +57,11 @@ const toBuffer = (bytes) => {
   return Buffer.isBuffer(bytes)
     ? bytes
     : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+};
+
+const getFileTypeFromBuffer = async (buffer) => {
+  const { fileTypeFromBuffer } = await import('file-type');
+  return fileTypeFromBuffer(buffer);
 };
 
 const shouldRasterize = (buffer, ext) => {
@@ -235,6 +241,15 @@ class OEmbedService {
 
       ext = '.png';
     }
+
+    const fileType = await getFileTypeFromBuffer(imageBuffer);
+    if (!fileType?.mime.startsWith('image/') || fileType.mime === 'image/svg+xml') {
+      throw new errors.ValidationError({
+        message: tpl(messages.invalidImage),
+        context: imageUrl,
+      });
+    }
+    ext = `.${fileType.ext}`;
 
     const uniqueFileName = `${name}-${crypto.randomUUID()}${ext}`;
     const targetPath = path.join(imageType, uniqueFileName);
