@@ -11,6 +11,16 @@ const path = require('path');
 const crypto = require('crypto');
 const imageTransform = require('@tryghost/image-transform');
 
+let fileTypeFromBuffer;
+
+async function getFileTypeFromBuffer(buffer) {
+  if (!fileTypeFromBuffer) {
+    ({ fileTypeFromBuffer } = await import('file-type'));
+  }
+
+  return fileTypeFromBuffer(buffer);
+}
+
 // Some sites block non-standard user agents so we need to mimic a typical browser
 // Note: the Ghost/5.0 string _may_ be in use by 3rd parties so use caution when updating across majors
 const USER_AGENT = 'Mozilla/5.0 (compatible; Ghost/5.0; +https://ghost.org/)';
@@ -42,6 +52,7 @@ const messages = {
   unableToFetchOembed: 'Unable to fetch requested embed.',
   unauthorized: 'URL contains a private resource.',
   unconvertibleSvg: 'SVG image is too large or compressed to convert.',
+  invalidImage: 'Downloaded bookmark asset is not a valid image.',
 };
 
 const SVG_RASTER_SIZE = 256;
@@ -235,6 +246,17 @@ class OEmbedService {
 
       ext = '.png';
     }
+
+    const detectedType = await getFileTypeFromBuffer(imageBuffer);
+    if (!detectedType?.mime.startsWith('image/') || detectedType.mime === 'image/svg+xml') {
+      throw new errors.ValidationError({
+        message: tpl(messages.invalidImage),
+        context: imageUrl,
+      });
+    }
+
+    // Never trust the remote URL's extension when choosing the public filename.
+    ext = `.${detectedType.ext}`;
 
     const uniqueFileName = `${name}-${crypto.randomUUID()}${ext}`;
     const targetPath = path.join(imageType, uniqueFileName);
