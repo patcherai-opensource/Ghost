@@ -41,6 +41,7 @@ const messages = {
   unknownProvider: 'No provider found for supplied URL.',
   unableToFetchOembed: 'Unable to fetch requested embed.',
   unauthorized: 'URL contains a private resource.',
+  invalidImage: 'Invalid image.',
   unconvertibleSvg: 'SVG image is too large or compressed to convert.',
 };
 
@@ -56,6 +57,11 @@ const toBuffer = (bytes) => {
   return Buffer.isBuffer(bytes)
     ? bytes
     : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+};
+
+const getFileTypeFromBuffer = async (buffer) => {
+  const { fileTypeFromBuffer } = await import('file-type');
+  return fileTypeFromBuffer(buffer);
 };
 
 const shouldRasterize = (buffer, ext) => {
@@ -235,6 +241,23 @@ class OEmbedService {
 
       ext = '.png';
     }
+
+    let detectedFileType;
+    try {
+      detectedFileType = await getFileTypeFromBuffer(imageBuffer);
+    } catch {
+      // Treat malformed or truncated responses as non-images.
+    }
+
+    if (!detectedFileType?.mime.startsWith('image/') || detectedFileType.mime === 'image/svg+xml') {
+      throw new errors.ValidationError({
+        message: tpl(messages.invalidImage),
+        context: imageUrl,
+      });
+    }
+
+    // Never trust the remote URL's extension when choosing the public filename.
+    ext = `.${detectedFileType.ext}`;
 
     const uniqueFileName = `${name}-${crypto.randomUUID()}${ext}`;
     const targetPath = path.join(imageType, uniqueFileName);
