@@ -691,6 +691,10 @@ describe('oembed-service', function () {
 
   describe('processImageFromUrl', function () {
     const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+    const VALID_PNG = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
 
     it('normalizes Uint8Array image responses from Got 15 to Buffer', async function () {
       const bytes = new Uint8Array(Buffer.from('img-bytes'));
@@ -732,7 +736,7 @@ describe('oembed-service', function () {
     });
 
     it('stores downloaded bookmark assets via image storage and returns the adapter URL', async function () {
-      const imageBytes = Buffer.from('img-bytes');
+      const imageBytes = VALID_PNG;
       const saveRaw = sinon
         .stub()
         .resolves('https://storage.ghost.is/c/6f/a3/site/content/images/thumbnail/sample-x.png');
@@ -776,7 +780,7 @@ describe('oembed-service', function () {
     it('writes a fresh key on every call, even for identical bytes (ONC-1788)', async function () {
       // A content hash would collide here and force an overwrite, which the
       // production bucket rejects. A unique key avoids the overwrite entirely.
-      const imageBytes = Buffer.from('ico-bytes');
+      const imageBytes = VALID_PNG;
       const saveRaw = sinon.stub().resolves('/stored');
       const getSanitizedFileName = sinon.stub().returns('favicon');
 
@@ -800,10 +804,10 @@ describe('oembed-service', function () {
       await service.processImageFromUrl('https://a.example.com/favicon.ico', 'icon');
       await service.processImageFromUrl('https://b.example.com/favicon.ico', 'icon');
 
-      assert.match(saveRaw.firstCall.args[1], new RegExp(`^icon/favicon-${UUID_RE.source}\\.ico$`));
+      assert.match(saveRaw.firstCall.args[1], new RegExp(`^icon/favicon-${UUID_RE.source}\\.png$`));
       assert.match(
         saveRaw.secondCall.args[1],
-        new RegExp(`^icon/favicon-${UUID_RE.source}\\.ico$`),
+        new RegExp(`^icon/favicon-${UUID_RE.source}\\.png$`),
       );
       assert.notEqual(saveRaw.firstCall.args[1], saveRaw.secondCall.args[1]);
     });
@@ -828,7 +832,7 @@ describe('oembed-service', function () {
         },
         externalRequest() {
           return {
-            buffer: async () => Buffer.from('bytes'),
+            buffer: async () => VALID_PNG,
           };
         },
       });
@@ -857,7 +861,7 @@ describe('oembed-service', function () {
         },
         externalRequest() {
           return {
-            buffer: async () => Buffer.from('bytes'),
+            buffer: async () => VALID_PNG,
           };
         },
       });
@@ -879,7 +883,7 @@ describe('oembed-service', function () {
         },
         externalRequest() {
           return {
-            buffer: async () => Buffer.from('img-bytes'),
+            buffer: async () => VALID_PNG,
           };
         },
       });
@@ -910,6 +914,52 @@ describe('oembed-service', function () {
         () => service.processImageFromUrl('https://example.com/broken.png', 'thumbnail'),
         { message: 'Network error' },
       );
+    });
+
+    describe('bookmark image validation', function () {
+      const buildService = (saveRaw, bytes) =>
+        new OembedService({
+          imageStore: {
+            getSanitizedFileName: sinon.stub().returns('favicon'),
+            saveRaw,
+          },
+          externalRequest() {
+            return {
+              buffer: async () => Buffer.from(bytes),
+            };
+          },
+        });
+
+      it('rejects HTML instead of storing it under an active extension', async function () {
+        const saveRaw = sinon.stub().resolves('/stored');
+        const service = buildService(saveRaw, '<!doctype html><script>alert(1)</script>');
+
+        await assert.rejects(
+          () => service.processImageFromUrl('https://example.com/favicon.html', 'icon'),
+          { name: 'ValidationError', message: 'Invalid image.' },
+        );
+        sinon.assert.notCalled(saveRaw);
+      });
+
+      it('rejects JSON served with a spoofed image extension', async function () {
+        const saveRaw = sinon.stub().resolves('/stored');
+        const service = buildService(saveRaw, '{"not":"an image"}');
+
+        await assert.rejects(
+          () => service.processImageFromUrl('https://example.com/favicon.png', 'icon'),
+          { name: 'ValidationError', message: 'Invalid image.' },
+        );
+        sinon.assert.notCalled(saveRaw);
+      });
+
+      it('uses the detected image extension instead of an active URL extension', async function () {
+        const saveRaw = sinon.stub().resolves('/stored');
+        const service = buildService(saveRaw, VALID_PNG);
+
+        await service.processImageFromUrl('https://example.com/favicon.html', 'icon');
+
+        assert.match(saveRaw.firstCall.args[1], /\.png$/);
+      });
     });
 
     describe('SVG bookmark images', function () {
@@ -1065,19 +1115,18 @@ describe('oembed-service', function () {
       it('leaves raster images untouched', async function () {
         const saveRaw = sinon.stub().resolves('/stored');
 
-        await buildService(saveRaw, PNG_MAGIC).processImageFromUrl(
+        await buildService(saveRaw, VALID_PNG).processImageFromUrl(
           'https://example.com/favicon.PNG',
           'icon',
         );
 
-        assert.deepEqual(saveRaw.firstCall.args[0], PNG_MAGIC);
-        // extension case is preserved, so existing URLs do not change
-        assert.match(saveRaw.firstCall.args[1], /\.PNG$/);
+        assert.deepEqual(saveRaw.firstCall.args[0], VALID_PNG);
+        assert.match(saveRaw.firstCall.args[1], /\.png$/);
       });
 
       it('does not convert a raster file containing the text <svg', async function () {
         const saveRaw = sinon.stub().resolves('/stored');
-        const png = Buffer.concat([PNG_MAGIC, Buffer.from('<svg width="1">')]);
+        const png = Buffer.concat([VALID_PNG, Buffer.from('<svg width="1">')]);
 
         await buildService(saveRaw, png).processImageFromUrl(
           'https://example.com/favicon.png',

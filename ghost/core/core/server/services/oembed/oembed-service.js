@@ -38,6 +38,7 @@ const isAmazonUrl = (url) => {
 const messages = {
   noUrlProvided: 'No url provided.',
   insufficientMetadata: 'URL contains insufficient metadata.',
+  invalidImage: 'Invalid image.',
   unknownProvider: 'No provider found for supplied URL.',
   unableToFetchOembed: 'Unable to fetch requested embed.',
   unauthorized: 'URL contains a private resource.',
@@ -56,6 +57,16 @@ const toBuffer = (bytes) => {
   return Buffer.isBuffer(bytes)
     ? bytes
     : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+};
+
+let fileTypeFromBuffer;
+
+const getFileTypeFromBuffer = async (buffer) => {
+  if (!fileTypeFromBuffer) {
+    ({ fileTypeFromBuffer } = await import('file-type'));
+  }
+
+  return fileTypeFromBuffer(buffer);
 };
 
 const shouldRasterize = (buffer, ext) => {
@@ -235,6 +246,23 @@ class OEmbedService {
 
       ext = '.png';
     }
+
+    let detectedFileType;
+    try {
+      detectedFileType = await getFileTypeFromBuffer(imageBuffer);
+    } catch {
+      // Invalid or truncated files can make the detector throw.
+    }
+
+    if (!detectedFileType?.mime.startsWith('image/') || detectedFileType.mime === 'image/svg+xml') {
+      throw new errors.ValidationError({
+        message: tpl(messages.invalidImage),
+        context: imageUrl,
+      });
+    }
+
+    // Never trust the remote URL's extension for publicly served files.
+    ext = `.${detectedFileType.ext}`;
 
     const uniqueFileName = `${name}-${crypto.randomUUID()}${ext}`;
     const targetPath = path.join(imageType, uniqueFileName);
